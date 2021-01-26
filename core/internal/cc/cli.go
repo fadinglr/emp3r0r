@@ -43,7 +43,7 @@ func CliMain() {
 		readline.PcItem("use",
 			readline.PcItemDynamic(listMods())),
 
-		readline.PcItem("help",
+		readline.PcItem(HELP,
 			readline.PcItemDynamic(listMods())),
 
 		readline.PcItem("target",
@@ -54,7 +54,7 @@ func CliMain() {
 		if cmd == "set" ||
 			cmd == "use" ||
 			cmd == "target" ||
-			cmd == "help" {
+			cmd == HELP {
 			continue
 		}
 		CmdCompls = append(CmdCompls, readline.PcItem(cmd))
@@ -122,7 +122,7 @@ start:
 	}
 
 	// ask the user if they really want to leave
-	if CliYesNo("Are you sure you want to leave? [y/N]") {
+	if CliYesNo("Are you sure you want to leave") {
 		os.Exit(0)
 	}
 
@@ -156,7 +156,7 @@ func CliPrintError(format string, a ...interface{}) {
 
 // CliYesNo prompt for a y/n answer from user
 func CliYesNo(prompt string) bool {
-	EmpReadLine.SetPrompt(color.CyanString(prompt))
+	EmpReadLine.SetPrompt(color.CyanString(prompt + "? [y/N] "))
 	EmpReadLine.Config.EOFPrompt = ""
 	EmpReadLine.Config.InterruptPrompt = ""
 
@@ -211,6 +211,7 @@ func CliBanner() error {
 	}
 
 	color.Cyan(string(data))
+	color.Cyan("version: %s\n\n", agent.Version)
 	return nil
 }
 
@@ -232,13 +233,20 @@ func CliPrettyPrint(header1, header2 string, map2write *map[string]string) {
 
 // encoded logo of emp3r0r
 const cliBannerB64 string = `
-CiAgICAgICAgICAgICAgICAgICAgICBfX19fICAgICAgICBfX18KICAgICAgICAgICAgICAgICAg
-ICAgfF9fXyBcICAgICAgLyBfIFwKICAgX19fIF8gX18gX19fICBfIF9fICBfXykgfF8gX198IHwg
-fCB8XyBfXwogIC8gXyBcICdfIGAgXyBcfCAnXyBcfF9fIDx8ICdfX3wgfCB8IHwgJ19ffAogfCAg
-X18vIHwgfCB8IHwgfCB8XykgfF9fKSB8IHwgIHwgfF98IHwgfAogIFxfX198X3wgfF98IHxffCAu
-X18vX19fXy98X3wgICBcX19fL3xffAogICAgICAgICAgICAgICAgfCB8CiAgICAgICAgICAgICAg
-ICB8X3wKCnBvc3QtZXhwbG9pdGF0aW9uIGZyYW1ld29yayBmb3IgbGludXgKCmh0dHBzOi8vZ2l0
-aHViLmNvbS9qbTMzLW0wL2VtcDNyMHIKCmJ5IGptMzMtbTAKCgo=
+CuKWkeKWkeKWkeKWkeKWkeKWkeKWkSDilpHilpHilpEgICAg4paR4paR4paRIOKWkeKWkeKWkeKW
+keKWkeKWkSAg4paR4paR4paR4paR4paR4paRICDilpHilpHilpHilpHilpHilpEgICDilpHilpHi
+lpHilpHilpHilpEgIOKWkeKWkeKWkeKWkeKWkeKWkQrilpLilpIgICAgICDilpLilpLilpLilpIg
+IOKWkuKWkuKWkuKWkiDilpLilpIgICDilpLilpIgICAgICDilpLilpIg4paS4paSICAg4paS4paS
+IOKWkuKWkiAg4paS4paS4paS4paSIOKWkuKWkiAgIOKWkuKWkgrilpLilpLilpLilpLilpIgICDi
+lpLilpIg4paS4paS4paS4paSIOKWkuKWkiDilpLilpLilpLilpLilpLilpIgICDilpLilpLilpLi
+lpLilpIgIOKWkuKWkuKWkuKWkuKWkuKWkiAg4paS4paSIOKWkuKWkiDilpLilpIg4paS4paS4paS
+4paS4paS4paSCuKWk+KWkyAgICAgIOKWk+KWkyAg4paT4paTICDilpPilpMg4paT4paTICAgICAg
+ICAgICDilpPilpMg4paT4paTICAg4paT4paTIOKWk+KWk+KWk+KWkyAg4paT4paTIOKWk+KWkyAg
+IOKWk+KWkwrilojilojilojilojilojilojilogg4paI4paIICAgICAg4paI4paIIOKWiOKWiCAg
+ICAgIOKWiOKWiOKWiOKWiOKWiOKWiCAg4paI4paIICAg4paI4paIICDilojilojilojilojiloji
+loggIOKWiOKWiCAgIOKWiOKWiAoKCmEgbGludXggcG9zdC1leHBsb2l0YXRpb24gZnJhbWV3b3Jr
+IG1hZGUgYnkgbGludXggdXNlcgoKYnkgam0zMy1uZwoKaHR0cHM6Ly9naXRodWIuY29tL2ptMzMt
+bTAvZW1wM3IwcgoKCg==
 `
 
 // autocomplete module options
@@ -255,6 +263,8 @@ func listValChoices() func(string) []string {
 			return Options["method"].Vals
 		case agent.ModPROXY:
 			return append(Options["status"].Vals, Options["port"].Vals...)
+		case agent.ModINJECTOR:
+			return append(Options["pid"].Vals, Options["method"].Vals...)
 		case agent.ModPORT_FWD:
 			ret := append(Options["listen_port"].Vals, Options["to"].Vals...)
 			ret = append(ret, Options["switch"].Vals...)

